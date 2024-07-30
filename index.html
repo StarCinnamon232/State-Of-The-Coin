@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML5 Platformer Game</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: rgb(2,0,36);
+            background: linear-gradient(90deg, rgba(2,0,36,1) 0%, rgba(9,9,121,1) 35%, rgba(0,212,255,1) 100%);
+        }
+        #gameContainer {
+            position: relative;
+        }
+        #gameCanvas {
+            border: 2px solid #000;
+            background-color: #87CEEB;
+            border-bottom: 12px solid #0f0;
+        }
+        #score, #distance {
+            position: absolute;
+            top: 10px;
+            font-size: 24px;
+            font-family: Arial, sans-serif;
+            color: #000000;
+        }
+        #score {
+            left: 10px;
+        }
+        #distance {
+            right: 10px;
+        }
+        #startButton, #restartButton, #jumpButton {
+            position: absolute;
+            padding: 10px 20px;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        #startButton {
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #restartButton {
+            top: 10px;
+            right: 10px;
+            display: none; /* Hidden until game over */
+        }
+        #jumpButton {
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <button id="startButton">Start Game</button>
+        <button id="restartButton">Restart Game</button>
+        <button id="jumpButton">Jump</button>
+        <audio id="bgMusic" src="Gotye - State of the Art [DLake Remix].mp3" loop preload="auto"></audio>
+        <canvas id="gameCanvas" width="800" height="400"></canvas>
+        <div id="score">Score: 0</div>
+        <div id="distance">Distance: 0</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const gameState = {
+            player: { x: 50, y: canvas.height - 100, width: 50, height: 100, color: 'red', speed: 5, gravity: 0.5, lift: -10, velocity: 0, onGround: true },
+            coins: [],
+            obstacles: [],
+            clouds: [],
+            score: 0,
+            distance: 0,
+            gameOver: false,
+            dayPhase: 0,
+            transitionProgress: 0,
+            transitionDuration: 10000 // Duration for each transition in milliseconds
+        };
+
+        const colors = [
+            { start: [255, 182, 193], end: [255, 99, 71] }, // Sunrise
+            { start: [135, 206, 235], end: [135, 206, 235] }, // Day
+            { start: [255, 127, 80], end: [255, 69, 0] }, // Evening
+            { start: [0, 0, 0], end: [0, 0, 51] } // Night
+        ];
+
+        function createCoin() {
+            const coin = {
+                x: Math.random() * canvas.width,
+                y: Math.random() * (canvas.height / 1.5),
+                width: 20,
+                height: 20,
+                color: 'gold'
+            };
+            gameState.coins.push(coin);
+        }
+
+        function createObstacle() {
+            const x = canvas.width + Math.random() * 300;
+            const y = canvas.height - 30;
+            const obstacle = { x, y, width: 30, height: 30, color: 'green' };
+
+            if (!gameState.obstacles.some(o => Math.abs(o.x - x) < 150)) {
+                gameState.obstacles.push(obstacle);
+            }
+        }
+
+        function createCloud() {
+            const cloud = {
+                x: Math.random() * canvas.width,
+                y: Math.random() * 100,
+                width: 100,
+                height: 50
+            };
+            gameState.clouds.push(cloud);
+        }
+
+        function drawPlayer() {
+            const { player } = gameState;
+            ctx.fillStyle = player.color;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+        }
+
+        function drawCoins() {
+            gameState.coins.forEach(coin => {
+                ctx.fillStyle = coin.color;
+                ctx.fillRect(coin.x, coin.y, coin.width, coin.height);
+            });
+        }
+
+        function drawObstacles() {
+            gameState.obstacles.forEach(obstacle => {
+                ctx.fillStyle = obstacle.color;
+                ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+            });
+        }
+
+        function drawClouds() {
+            ctx.fillStyle = 'white';
+            gameState.clouds.forEach(cloud => {
+                ctx.fillRect(cloud.x, cloud.y, cloud.width, cloud.height);
+            });
+        }
+
+        function drawScore() {
+            document.getElementById('score').innerText = `Score: ${gameState.score}`;
+        }
+
+        function drawDistance() {
+            document.getElementById('distance').innerText = `Distance: ${Math.floor(gameState.distance)}`;
+        }
+
+        function interpolateColor(color1, color2, factor) {
+            const result = color1.map((c, i) => Math.round(c + factor * (color2[i] - c)));
+            return `rgb(${result[0]}, ${result[1]}, ${result[2]})`;
+        }
+
+        function getSkyColor() {
+            const { dayPhase, transitionProgress, transitionDuration } = gameState;
+            const color1 = colors[dayPhase].start;
+            const color2 = colors[dayPhase].end;
+
+            const factor = transitionProgress / transitionDuration;
+            return interpolateColor(color1, color2, factor);
+        }
+
+        function updateDayPhase() {
+            gameState.transitionProgress = 0;
+            gameState.dayPhase = (gameState.dayPhase + 1) % colors.length; // Cycle through day phases
+        }
+
+        function detectCollisions() {
+            const { player, coins, obstacles } = gameState;
+
+            coins.forEach((coin, index) => {
+                if (player.x < coin.x + coin.width &&
+                    player.x + player.width > coin.x &&
+                    player.y < coin.y + coin.height &&
+                    player.y + player.height > coin.y) {
+                    gameState.score++; // Increment score
+                    gameState.coins.splice(index, 1); // Remove the coin
+                }
+            });
+
+            obstacles.forEach((obstacle) => {
+                if (player.x < obstacle.x + obstacle.width &&
+                    player.x + player.width > obstacle.x &&
+                    player.y < obstacle.y + obstacle.height &&
+                    player.y + player.height > obstacle.y) {
+                    gameState.gameOver = true; // End game on collision
+                }
+            });
+        }
+
+        function updateGame() {
+            if (gameState.gameOver) {
+                ctx.fillStyle = 'black';
+                ctx.fillText('Game Over', canvas.width / 2 - 40, canvas.height / 2);
+                document.getElementById('restartButton').style.display = 'block'; // Show restart button
+                return;
+            }
+
+            ctx.fillStyle = getSkyColor();
+            ctx.fillRect(0, 0, canvas.width, canvas.height); // Draw background
+
+            drawClouds();
+            drawPlayer();
+            drawCoins();
+            drawObstacles();
+            drawScore();
+            drawDistance();
+
+            updatePlayer();
+            detectCollisions();
+            moveCoins();
+            moveObstacles();
+            moveClouds();
+
+            // Update transition progress
+            if (gameState.transitionProgress < gameState.transitionDuration) {
+                gameState.transitionProgress += 16; // Approximate frame time
+            } else {
+                updateDayPhase(); // Update to next phase once transition is complete
+            }
+
+            // Update distance
+            gameState.distance += 0.05; // Increase distance
+
+            requestAnimationFrame(updateGame);
+        }
+
+        function handleKeyDown(event) {
+            if (event.key === 'ArrowUp' && gameState.player.onGround) {
+                gameState.player.velocity = gameState.player.lift; // Jump
+                gameState.player.onGround = false; // Player is now in the air
+            }
+        }
+
+        function jump() {
+            if (gameState.player.onGround) {
+                gameState.player.velocity = gameState.player.lift; // Jump
+                gameState.player.onGround = false; // Player is now in the air
+            }
+        }
+
+        function updatePlayer() {
+            const { player } = gameState;
+
+            player.y += player.velocity;
+            player.velocity += player.gravity;
+
+            if (player.y >= canvas.height - player.height) {
+                player.y = canvas.height - player.height;
+                player.velocity = 0;
+                player.onGround = true;
+            }
+        }
+
+        function moveCoins() {
+            gameState.coins.forEach(coin => {
+                coin.x -= gameState.player.speed;
+            });
+
+            gameState.coins = gameState.coins.filter(coin => coin.x + coin.width > 0);
+            if (Math.random() < 0.02) {
+                createCoin();
+            }
+        }
+
+        function moveObstacles() {
+            gameState.obstacles.forEach(obstacle => {
+                obstacle.x -= gameState.player.speed;
+            });
+
+            gameState.obstacles = gameState.obstacles.filter(obstacle => obstacle.x + obstacle.width > 0);
+            if (Math.random() < 0.01) {
+                createObstacle();
+            }
+        }
+
+        function moveClouds() {
+            gameState.clouds.forEach(cloud => {
+                cloud.x -= 0.5; // Move clouds slowly to the left
+            });
+
+            gameState.clouds = gameState.clouds.filter(cloud => cloud.x + cloud.width > 0);
+            if (Math.random() < 0.02) {
+                createCloud();
+            }
+        }
+
+        function spawnEntities() {
+            createCoin();
+            createObstacle();
+        }
+
+        setInterval(spawnEntities, 1000); // Spawn coins and obstacles every second
+        setInterval(() => {
+            if (gameState.transitionProgress >= gameState.transitionDuration) {
+                updateDayPhase();
+            }
+        }, 5000); // Change day phase every 5 seconds
+
+        document.getElementById('startButton').addEventListener('click', () => {
+            const bgMusic = document.getElementById('bgMusic');
+            bgMusic.play().catch(error => {
+                console.log('Playback prevented: ', error);
+            });
+
+            document.getElementById('startButton').style.display = 'none'; // Hide start button
+            document.getElementById('restartButton').style.display = 'none'; // Hide restart button
+            updateGame(); // Start the game loop
+        });
+
+        document.getElementById('restartButton').addEventListener('click', () => {
+            // Reset game state
+            Object.assign(gameState, {
+                player: { x: 50, y: canvas.height - 100, width: 50, height: 50, color: 'red', speed: 5, gravity: 0.5, lift: -12, velocity: 0, onGround: true },
+                coins: [],
+                obstacles: [],
+                clouds: [],
+                score: 0,
+                distance: 0,
+                gameOver: false,
+                dayPhase: 0,
+                transitionProgress: 0
+            });
+
+            // Hide restart button and restart the game
+            document.getElementById('restartButton').style.display = 'none';
+            updateGame();
+        });
+
+        document.getElementById('jumpButton').addEventListener('click', jump);
+        document.addEventListener('keydown', handleKeyDown);
+
+        // Initialize the game
+        for (let i = 0; i < 10; i++) {
+            createCoin();
+        }
+        for (let i = 0; i < 5; i++) {
+            createObstacle();
+        }
+        for (let i = 0; i < 5; i++) {
+            createCloud();
+        }
+    </script>
+</body>
+</html>
